@@ -77,9 +77,37 @@ def test_local_file_naming_uses_content_hash(client: he.Client, api: FakeAPI, tm
     assert name1 == name2
 
     # Changing file *content* changes the name even at the same path.
-    client._media_refs.clear()
     video_a.write_bytes(b"different-content")
     assert scorer.submit(pair).name != name1
+
+
+def test_changed_local_file_reuploads_in_same_client(client: he.Client, api: FakeAPI, tmp_path):
+    video = tmp_path / "0.mp4"
+    video.write_bytes(b"old-video")
+    api.add(
+        "POST",
+        "/media",
+        {"media": [{"media_ref": "dp://old/0.mp4", "media_id": "old", "type": "video"}]},
+    )
+    api.add(
+        "POST",
+        "/media",
+        {"media": [{"media_ref": "dp://new/0.mp4", "media_id": "new", "type": "video"}]},
+    )
+    api.add("POST", "/jobs", create_job_response())
+    scorer = he.HumanRating("Rate it.", client=client)
+    items = [he.Media(video)]
+
+    first = scorer.submit(items)
+    video.write_bytes(b"new-video")
+    second = scorer.submit(items)
+
+    assert first.name != second.name
+    assert api.paths() == ["POST /media", "POST /jobs", "POST /media", "POST /jobs"]
+    first_media = api.body(1)["datapoints"][0]["media"]["subject"][0]
+    second_media = api.body(3)["datapoints"][0]["media"]["subject"][0]
+    assert first_media["url"] == "dp://old/0.mp4"
+    assert second_media["url"] == "dp://new/0.mp4"
 
 
 def test_explicit_name_wins(client: he.Client, api: FakeAPI):

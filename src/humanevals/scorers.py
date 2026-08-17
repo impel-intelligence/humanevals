@@ -53,6 +53,7 @@ __all__ = [
 
 # Shared lazily-created client for scorers constructed without one.
 _default_client: Client | None = None
+_MediaHashes = dict[tuple[str, str], str]
 
 
 def _get_default_client() -> Client:
@@ -167,11 +168,12 @@ class HumanScorer:
             if estimate > max_credits:
                 raise BudgetExceededError(estimate, max_credits)
 
-        job_name = name or self._content_name(prepared)
+        media_hashes: _MediaHashes = {}
+        job_name = name or self._content_name(prepared, media_hashes=media_hashes)
         if fresh:
             job_name = f"{job_name}-{uuid.uuid4().hex[:8]}"
 
-        body = self._job_body(prepared)
+        body = self._job_body(prepared, media_hashes=media_hashes)
         body["name"] = job_name
         created = self.client.create_job(body)
         # pricing is null exactly when the API replayed an existing job for
@@ -243,7 +245,9 @@ class HumanScorer:
     def _validate_batch(self, items: list[Any]) -> None:
         """Reject invalid or mixed-mode batches before any network call."""
 
-    def _datapoint(self, item: Any, *, for_naming: bool) -> dict[str, Any]:
+    def _datapoint(
+        self, item: Any, *, for_naming: bool, media_hashes: _MediaHashes
+    ) -> dict[str, Any]:
         """Build one API datapoint.
 
         With ``for_naming=True``, local files are represented by a stable
@@ -267,12 +271,17 @@ class HumanScorer:
 
     # -- shared internals ----------------------------------------------------
 
-    def _job_body(self, items: list[Any]) -> dict[str, Any]:
+    def _job_body(
+        self, items: list[Any], *, media_hashes: _MediaHashes | None = None
+    ) -> dict[str, Any]:
+        media_hashes = media_hashes if media_hashes is not None else {}
         body: dict[str, Any] = {
             "instruction": self.instruction,
             "task_type": self._task_type(items),
             "max_responses_per_datapoint": self.responses_per_item,
-            "datapoints": [self._datapoint(i, for_naming=False) for i in items],
+            "datapoints": [
+                self._datapoint(i, for_naming=False, media_hashes=media_hashes) for i in items
+            ],
         }
         options = self._response_options(items)
         if options is not None:
@@ -283,8 +292,9 @@ class HumanScorer:
             body["serving_environment"] = "sandbox"
         return body
 
-    def _content_name(self, items: list[Any]) -> str:
+    def _content_name(self, items: list[Any], *, media_hashes: _MediaHashes | None = None) -> str:
         """Deterministic job name from the full request content."""
+        media_hashes = media_hashes if media_hashes is not None else {}
         naming_body: dict[str, Any] = {
             "instruction": self.instruction,
             "task_type": self._task_type(items),
@@ -292,7 +302,9 @@ class HumanScorer:
             "response_options": self._response_options(items),
             "annotator_filter": self.annotator_filter,
             "sandbox": self.sandbox,
-            "datapoints": [self._datapoint(i, for_naming=True) for i in items],
+            "datapoints": [
+                self._datapoint(i, for_naming=True, media_hashes=media_hashes) for i in items
+            ],
         }
         canonical = json.dumps(naming_body, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(f"humanevals:1:{canonical}".encode()).hexdigest()
@@ -310,15 +322,22 @@ class HumanScorer:
                 stacklevel=_user_stacklevel(),
             )
 
-    def _media_item(self, media: Media, *, for_naming: bool) -> dict[str, str]:
+    def _media_item(
+        self, media: Media, *, for_naming: bool, media_hashes: _MediaHashes
+    ) -> dict[str, str]:
         """Resolve a :class:`Media` into an API media item (or naming token)."""
-        if for_naming:
-            if media.is_remote:
-                return {"url": str(media.source), "type": media.resolved_type()}
-            path = Path(media.source).expanduser().resolve()
+        media_type = media.resolved_type()
+        if media.is_remote:
+            return {"url": str(media.source), "type": media_type}
+        path = Path(media.source).expanduser().resolve()
+        cache_key = (str(path), media_type)
+        digest = media_hashes.get(cache_key)
+        if digest is None:
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            media_hashes[cache_key] = digest
+        if for_naming:
             return {"content_sha256": digest, "type": media.resolved_type()}
-        return self.client.resolve_media(media)
+        return self.client.resolve_media(media, content_sha256=digest)
 
     def _scores_from_results(
         self,
@@ -466,7 +485,9 @@ class HumanComparison(HumanScorer):
         # media-only); with 2 candidates the math maps back exactly.
         return {"text": "ranking", "comparison": "comparison", "i2v": "i2v_comparison"}[mode]
 
-    def _datapoint(self, item: Pair, *, for_naming: bool) -> dict[str, Any]:
+    def _datapoint(
+        self, item: Pair, *, for_naming: bool, media_hashes: _MediaHashes
+    ) -> dict[str, Any]:
         mode = self._mode(item)
         if mode == "text":
             media: dict[str, Any] = {
@@ -479,12 +500,16 @@ class HumanComparison(HumanScorer):
             assert isinstance(item.a, Media) and isinstance(item.b, Media)
             media = {
                 "candidates": [
-                    self._media_item(item.a, for_naming=for_naming),
-                    self._media_item(item.b, for_naming=for_naming),
+                    self._media_item(item.a, for_naming=for_naming, media_hashes=media_hashes),
+                    self._media_item(item.b, for_naming=for_naming, media_hashes=media_hashes),
                 ]
             }
             if item.reference is not None:
-                media["reference"] = [self._media_item(item.reference, for_naming=for_naming)]
+                media["reference"] = [
+                    self._media_item(
+                        item.reference, for_naming=for_naming, media_hashes=media_hashes
+                    )
+                ]
         datapoint: dict[str, Any] = {"media": media}
         if item.context is not None:
             datapoint["context"] = item.context
@@ -619,12 +644,18 @@ class HumanRating(HumanScorer):
             options["labels"] = self.labels
         return options
 
-    def _datapoint(self, item: RatingItem, *, for_naming: bool) -> dict[str, Any]:
+    def _datapoint(
+        self, item: RatingItem, *, for_naming: bool, media_hashes: _MediaHashes
+    ) -> dict[str, Any]:
         if isinstance(item.subject, str):
             # Text-only rating: the API requires an explicit empty media dict.
             return {"media": {}, "context": item.subject}
         datapoint: dict[str, Any] = {
-            "media": {"subject": [self._media_item(item.subject, for_naming=for_naming)]}
+            "media": {
+                "subject": [
+                    self._media_item(item.subject, for_naming=for_naming, media_hashes=media_hashes)
+                ]
+            }
         }
         if item.context is not None:
             datapoint["context"] = item.context
@@ -721,14 +752,18 @@ class HumanMultipleChoice(HumanScorer):
     def _option_id(index: int) -> str:
         return f"option_{index + 1}"
 
-    def _datapoint(self, item: ChoiceItem, *, for_naming: bool) -> dict[str, Any]:
+    def _datapoint(
+        self, item: ChoiceItem, *, for_naming: bool, media_hashes: _MediaHashes
+    ) -> dict[str, Any]:
         media: dict[str, Any] = {
             "options": [
                 {"id": self._option_id(i), "text": text} for i, text in enumerate(item.options)
             ]
         }
         if item.subject is not None:
-            media["subject"] = [self._media_item(item.subject, for_naming=for_naming)]
+            media["subject"] = [
+                self._media_item(item.subject, for_naming=for_naming, media_hashes=media_hashes)
+            ]
         return {"media": media, "context": item.question}
 
     def _score_row(self, row: dict[str, Any], item: ChoiceItem | None) -> Score:
@@ -814,7 +849,9 @@ class HumanRanking(HumanScorer):
         media_type = candidates[0].resolved_type() if isinstance(candidates[0], Media) else ""
         return [f"{media_type}_{i + 1}" for i in range(len(candidates))]
 
-    def _datapoint(self, item: RankingItem, *, for_naming: bool) -> dict[str, Any]:
+    def _datapoint(
+        self, item: RankingItem, *, for_naming: bool, media_hashes: _MediaHashes
+    ) -> dict[str, Any]:
         candidates = list(item.candidates)
         ids = self._candidate_ids(item)
         payload: list[dict[str, str]]
@@ -822,7 +859,7 @@ class HumanRanking(HumanScorer):
             payload = [{"id": ids[i], "text": str(c)} for i, c in enumerate(candidates)]
         else:
             payload = [
-                self._media_item(c, for_naming=for_naming)
+                self._media_item(c, for_naming=for_naming, media_hashes=media_hashes)
                 for c in candidates
                 if isinstance(c, Media)
             ]
