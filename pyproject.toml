@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "humanevals"
-version = "0.1.0"
+version = "0.1.1"
 description = "Human-backed scorers for your evals. Autoevals-compatible Score objects, powered by real human annotators via the Datapoint API."
 readme = "README.md"
 license = "MIT"
