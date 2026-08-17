@@ -8,6 +8,7 @@ and mapping of API error responses onto the typed exceptions in
 
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 import time
@@ -111,8 +112,9 @@ class Client:
             timeout=httpx.Timeout(timeout, read=timeout * 4),
             transport=transport,
         )
-        # Local paths already uploaded this session, keyed by resolved path.
-        self._media_refs: dict[str, str] = {}
+        # Local file versions already uploaded this session. Including the
+        # content hash prevents an in-place overwrite from reusing a stale ref.
+        self._media_refs: dict[tuple[str, str, str], str] = {}
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -202,12 +204,14 @@ class Client:
         media: list[dict[str, Any]] = body["media"]
         return media
 
-    def resolve_media(self, media: Media) -> dict[str, str]:
+    def resolve_media(self, media: Media, *, content_sha256: str | None = None) -> dict[str, str]:
         """Turn a :class:`Media` into the ``{"url", "type"}`` item jobs expect.
 
         Remote sources (``https://`` / ``dp://``) pass through unchanged.
-        Local files are uploaded once per client (cached by resolved path)
-        and replaced with their ``dp://`` ref.
+        Each version of a local file is uploaded once per client (cached by
+        resolved path, media type, and content hash) and replaced with its
+        ``dp://`` ref. Scorers pass their precomputed ``content_sha256`` so
+        naming and submission use the same file fingerprint.
         """
         media_type = media.resolved_type()
         if media.is_remote:
@@ -215,7 +219,9 @@ class Client:
         path = Path(media.source).expanduser().resolve()
         if not path.is_file():
             raise FileNotFoundError(f"Media file not found: {path}")
-        cache_key = str(path)
+        if content_sha256 is None:
+            content_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        cache_key = (str(path), media_type, content_sha256)
         if cache_key not in self._media_refs:
             uploaded = self.upload_media([path])[0]
             self._media_refs[cache_key] = uploaded["media_ref"]
