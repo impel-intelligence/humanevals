@@ -102,16 +102,22 @@ def test_text_subject_with_extra_context_rejected(client: he.Client):
         make_scorer(client).submit([he.RatingItem(subject="text", context="extra")])
 
 
-def test_text_subject_with_reference_rejected(client: he.Client):
-    with pytest.raises(ValueError, match="cannot carry a media reference"):
-        make_scorer(client).submit(
-            [
-                he.RatingItem(
-                    subject="text",
-                    reference=he.Media("dp://original456/shoe.png"),
-                )
-            ]
-        )
+def test_text_subject_with_reference(client: he.Client, api: FakeAPI):
+    api.add("POST", "/jobs", create_job_response())
+
+    make_scorer(client).submit(
+        [
+            he.RatingItem(
+                subject="A red shoe with white laces.",
+                reference=he.Media("dp://original456/shoe.png"),
+            )
+        ]
+    )
+
+    assert api.body()["datapoints"][0] == {
+        "media": {"reference": [{"url": "dp://original456/shoe.png", "type": "image"}]},
+        "context": "A red shoe with white laces.",
+    }
 
 
 def test_wrong_item_type_rejected(client: he.Client):

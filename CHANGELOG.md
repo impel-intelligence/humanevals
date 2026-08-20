@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Allow `HumanRating` media items to include one non-selectable reference
-  through `RatingItem.reference`.
+- Allow `HumanRating` media and text items to include one non-selectable media
+  reference through `RatingItem.reference`.
 
 ### Fixed
 

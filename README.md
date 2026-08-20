@@ -106,6 +106,21 @@ scores = identity.eval_batch(
     ]
 )
 
+# Text description rating against reference media
+description_accuracy = he.HumanRating(
+    "How accurately does this description match the reference image?\n\nDescription: {context}",
+    scale=(1, 5),
+    labels={1: "Not accurate", 5: "Fully accurate"},
+)
+scores = description_accuracy.eval_batch(
+    [
+        he.RatingItem(
+            subject="A red shoe with white laces.",
+            reference=he.Media("shoe1.png"),
+        )
+    ]
+)
+
 # Multiple choice
 scorer = he.HumanMultipleChoice("Answer based only on the screenshot.")
 scores = scorer.eval_batch(

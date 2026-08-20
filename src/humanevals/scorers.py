@@ -571,7 +571,7 @@ class HumanRating(HumanScorer):
 
     Items are :class:`~humanevals.RatingItem` objects, or bare ``str`` /
     :class:`~humanevals.Media` subjects. Use ``RatingItem.reference`` to show
-    non-selectable reference media alongside a media subject.
+    non-selectable reference media alongside either kind of subject.
 
     """
 
@@ -616,8 +616,6 @@ class HumanRating(HumanScorer):
     def _validate_batch(self, items: list[RatingItem]) -> None:
         for item in items:
             if isinstance(item.subject, str):
-                if item.reference is not None:
-                    raise ValueError("Text rating subjects cannot carry a media reference.")
                 if "{context}" not in self.instruction:
                     raise ValueError(
                         "Text subjects are shown through the instruction's {context} "
@@ -651,8 +649,16 @@ class HumanRating(HumanScorer):
         self, item: RatingItem, *, for_naming: bool, media_hashes: _MediaHashes
     ) -> dict[str, Any]:
         if isinstance(item.subject, str):
-            # Text-only rating: the API requires an explicit empty media dict.
-            return {"media": {}, "context": item.subject}
+            media: dict[str, list[dict[str, Any]]] = {}
+            if item.reference is not None:
+                media["reference"] = [
+                    self._media_item(
+                        item.reference,
+                        for_naming=for_naming,
+                        media_hashes=media_hashes,
+                    )
+                ]
+            return {"media": media, "context": item.subject}
         media = {
             "subject": [
                 self._media_item(item.subject, for_naming=for_naming, media_hashes=media_hashes)
