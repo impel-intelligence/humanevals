@@ -570,7 +570,8 @@ class HumanRating(HumanScorer):
         labels: Optional anchor labels, e.g. ``{1: "Poor", 5: "Excellent"}``.
 
     Items are :class:`~humanevals.RatingItem` objects, or bare ``str`` /
-    :class:`~humanevals.Media` subjects.
+    :class:`~humanevals.Media` subjects. Use ``RatingItem.reference`` to show
+    non-selectable reference media alongside a media subject.
 
     """
 
@@ -615,6 +616,8 @@ class HumanRating(HumanScorer):
     def _validate_batch(self, items: list[RatingItem]) -> None:
         for item in items:
             if isinstance(item.subject, str):
+                if item.reference is not None:
+                    raise ValueError("Text rating subjects cannot carry a media reference.")
                 if "{context}" not in self.instruction:
                     raise ValueError(
                         "Text subjects are shown through the instruction's {context} "
@@ -650,13 +653,16 @@ class HumanRating(HumanScorer):
         if isinstance(item.subject, str):
             # Text-only rating: the API requires an explicit empty media dict.
             return {"media": {}, "context": item.subject}
-        datapoint: dict[str, Any] = {
-            "media": {
-                "subject": [
-                    self._media_item(item.subject, for_naming=for_naming, media_hashes=media_hashes)
-                ]
-            }
+        media = {
+            "subject": [
+                self._media_item(item.subject, for_naming=for_naming, media_hashes=media_hashes)
+            ]
         }
+        if item.reference is not None:
+            media["reference"] = [
+                self._media_item(item.reference, for_naming=for_naming, media_hashes=media_hashes)
+            ]
+        datapoint: dict[str, Any] = {"media": media}
         if item.context is not None:
             datapoint["context"] = item.context
         return datapoint

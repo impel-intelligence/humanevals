@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Allow `HumanRating` media items to include one non-selectable reference
+  through `RatingItem.reference`.
+
 ### Fixed
 
 - Re-upload local media when its contents change at the same path, keeping

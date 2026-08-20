@@ -91,6 +91,21 @@ scorer = he.HumanRating(
 )
 scores = scorer.eval_batch([resp.text for resp in responses])
 
+# Media rating against a non-selectable reference
+identity = he.HumanRating(
+    "Do people, animals, or objects maintain their original identity and features after the edit?",
+    scale=(1, 5),
+    labels={1: "Not preserved", 5: "Fully preserved"},
+)
+scores = identity.eval_batch(
+    [
+        he.RatingItem(
+            subject=he.Media("shoe2.png"),
+            reference=he.Media("shoe1.png"),
+        )
+    ]
+)
+
 # Multiple choice
 scorer = he.HumanMultipleChoice("Answer based only on the screenshot.")
 scores = scorer.eval_batch(

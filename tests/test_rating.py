@@ -68,6 +68,26 @@ def test_media_subject_with_context(client: he.Client, api: FakeAPI):
     assert api.body()["datapoints"][0]["context"] == "a red fox"
 
 
+def test_media_subject_with_reference(client: he.Client, api: FakeAPI):
+    api.add("POST", "/jobs", create_job_response())
+    scorer = he.HumanRating("How well does the edit preserve identity?", client=client)
+    scorer.submit(
+        [
+            he.RatingItem(
+                subject=he.Media("dp://edited123/shoe.png"),
+                reference=he.Media("dp://original456/shoe.png"),
+            )
+        ]
+    )
+
+    assert api.body()["datapoints"][0] == {
+        "media": {
+            "subject": [{"url": "dp://edited123/shoe.png", "type": "image"}],
+            "reference": [{"url": "dp://original456/shoe.png", "type": "image"}],
+        }
+    }
+
+
 # -- validation --------------------------------------------------------------
 
 
@@ -80,6 +100,18 @@ def test_text_subject_requires_context_placeholder(client: he.Client):
 def test_text_subject_with_extra_context_rejected(client: he.Client):
     with pytest.raises(ValueError, match="ambiguous"):
         make_scorer(client).submit([he.RatingItem(subject="text", context="extra")])
+
+
+def test_text_subject_with_reference_rejected(client: he.Client):
+    with pytest.raises(ValueError, match="cannot carry a media reference"):
+        make_scorer(client).submit(
+            [
+                he.RatingItem(
+                    subject="text",
+                    reference=he.Media("dp://original456/shoe.png"),
+                )
+            ]
+        )
 
 
 def test_wrong_item_type_rejected(client: he.Client):
