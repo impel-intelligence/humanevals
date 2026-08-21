@@ -161,11 +161,15 @@ class RatingItem:
             also setting ``context``.
         context: Optional extra context for a *media* subject. Shown only if
             the instruction contains ``{context}``.
+        reference: Optional non-selectable media shown alongside the subject
+            (for example, the original image for an edited-image rating, or
+            an image whose text description is being rated).
 
     """
 
     subject: str | Media
     context: str | None = None
+    reference: Media | None = None
 
 
 @dataclass(frozen=True)
